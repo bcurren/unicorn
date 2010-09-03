@@ -18,12 +18,8 @@
 #define UH_FL_HASTRAILER 0x8
 #define UH_FL_INTRAILER 0x10
 #define UH_FL_INCHUNK  0x20
-#define UH_FL_KAMETHOD 0x40
-#define UH_FL_KAVERSION 0x80
-#define UH_FL_HASHEADER 0x100
-
-/* both of these flags need to be set for keepalive to be supported */
-#define UH_FL_KEEPALIVE (UH_FL_KAMETHOD | UH_FL_KAVERSION)
+#define UH_FL_KEEPALIVE 0x40
+#define UH_FL_HASHEADER 0x80
 
 /* keep this small for Rainbows! since every client has one */
 struct http_parser {
@@ -57,7 +53,6 @@ static void finalize_header(struct http_parser *hp, VALUE req);
 #define HP_FL_TEST(hp,fl) ((hp)->flags & (UH_FL_##fl))
 #define HP_FL_SET(hp,fl) ((hp)->flags |= (UH_FL_##fl))
 #define HP_FL_UNSET(hp,fl) ((hp)->flags &= ~(UH_FL_##fl))
-#define HP_FL_ALL(hp,fl) (HP_FL_TEST(hp, fl) == (UH_FL_##fl))
 
 /*
  * handles values of the "Connection:" header, keepalive is implied
@@ -66,24 +61,21 @@ static void finalize_header(struct http_parser *hp, VALUE req);
  */
 static void hp_keepalive_connection(struct http_parser *hp, VALUE val)
 {
-  /* REQUEST_METHOD is always set before any headers */
-  if (HP_FL_TEST(hp, KAMETHOD)) {
-    if (STR_CSTR_CASE_EQ(val, "keep-alive")) {
-      /* basically have HTTP/1.0 masquerade as HTTP/1.1+ */
-      HP_FL_SET(hp, KAVERSION);
-    } else if (STR_CSTR_CASE_EQ(val, "close")) {
-      /*
-       * it doesn't matter what HTTP version or request method we have,
-       * if a client says "Connection: close", we disable keepalive
-       */
-      HP_FL_UNSET(hp, KEEPALIVE);
-    } else {
-      /*
-       * client could've sent anything, ignore it for now.  Maybe
-       * "HP_FL_UNSET(hp, KEEPALIVE);" just in case?
-       * Raising an exception might be too mean...
-       */
-    }
+  if (STR_CSTR_CASE_EQ(val, "keep-alive")) {
+    /* basically have HTTP/1.0 masquerade as HTTP/1.1+ */
+    HP_FL_SET(hp, KEEPALIVE);
+  } else if (STR_CSTR_CASE_EQ(val, "close")) {
+    /*
+     * it doesn't matter what HTTP version or request method we have,
+     * if a client says "Connection: close", we disable keepalive
+     */
+    HP_FL_UNSET(hp, KEEPALIVE);
+  } else {
+    /*
+     * client could've sent anything, ignore it for now.  Maybe
+     * "HP_FL_UNSET(hp, KEEPALIVE);" just in case?
+     * Raising an exception might be too mean...
+     */
   }
 }
 
@@ -94,14 +86,11 @@ request_method(struct http_parser *hp, VALUE req, const char *ptr, size_t len)
 
   /*
    * we only support keepalive for GET and HEAD requests for now other
-   * methods are too rarely seen to be worth optimizing.  POST is unsafe
-   * since some clients send extra bytes after POST bodies.
+   * methods are too rarely seen to be worth optimizing away allocations for.
    */
   if (CONST_MEM_EQ("GET", ptr, len)) {
-    HP_FL_SET(hp, KAMETHOD);
     v = g_GET;
   } else if (CONST_MEM_EQ("HEAD", ptr, len)) {
-    HP_FL_SET(hp, KAMETHOD);
     v = g_HEAD;
   } else {
     v = rb_str_new(ptr, len);
@@ -118,7 +107,7 @@ http_version(struct http_parser *hp, VALUE req, const char *ptr, size_t len)
 
   if (CONST_MEM_EQ("HTTP/1.1", ptr, len)) {
     /* HTTP/1.1 implies keepalive unless "Connection: close" is set */
-    HP_FL_SET(hp, KAVERSION);
+    HP_FL_SET(hp, KEEPALIVE);
     v = g_http_11;
   } else if (CONST_MEM_EQ("HTTP/1.0", ptr, len)) {
     v = g_http_10;
@@ -592,7 +581,7 @@ static VALUE HttpParser_keepalive(VALUE self)
 {
   struct http_parser *hp = data_get(self);
 
-  return HP_FL_ALL(hp, KEEPALIVE) ? Qtrue : Qfalse;
+  return HP_FL_TEST(hp, KEEPALIVE) ? Qtrue : Qfalse;
 }
 
 /**

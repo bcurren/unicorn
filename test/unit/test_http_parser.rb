@@ -76,14 +76,6 @@ class HttpParserTest < Test::Unit::TestCase
     assert parser.keepalive?
   end
 
-  def test_connection_keep_alive_ka_bad_method
-    parser = HttpParser.new
-    req = {}
-    tmp = "POST / HTTP/1.1\r\nConnection: keep-alive\r\n\r\n"
-    assert_equal req.object_id, parser.headers(req, tmp).object_id
-    assert ! parser.keepalive?
-  end
-
   def test_connection_keep_alive_ka_bad_version
     parser = HttpParser.new
     req = {}
@@ -461,7 +453,7 @@ class HttpParserTest < Test::Unit::TestCase
       assert_equal 'page=1', req['QUERY_STRING']
       assert_equal "", s
       assert_equal m, req['REQUEST_METHOD']
-      assert ! parser.keepalive? # TODO: read HTTP/1.2 when it's final
+      assert parser.keepalive? # TODO: read HTTP/1.2 when it's final
     }
   end
 
