@@ -622,19 +622,67 @@ module Unicorn
         nil
     end
 
+    class SockWrapper < Struct.new(:io, :file)
+      def now
+        Time.now.strftime("%Y%m%d-%H%M%S")
+      end
+      def initialize(io)
+        addr = io.peeraddr[-1]
+        super(io, File.new(".#{addr}-#{now}-#$$", "ab"))
+      end
+
+      def readpartial(nr, buf = '')
+        rv = io.readpartial(nr, buf)
+        file.syswrite("R: #{buf.inspect}\n")
+        rv
+      end
+
+      def peeraddr
+        io.peeraddr
+      end
+
+      def dbg(msg)
+        file.syswrite("D: #{now} #{msg}\n")
+      end
+
+      def write_nonblock(buf)
+        io.write_nonblock(buf)
+      end
+
+      def write(buf)
+        io.write(buf)
+      end
+
+      def close
+        io.close
+        file.close
+      end
+    end
+
     # once a client is accepted, it is processed in its entirety here
     # in 3 easy steps: read request, call app, write app response
     def process_client(client)
+      Thread.new(client) { |client| process_client2(client) }
+    end
+    def process_client2(client)
       client.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC)
-      response = app.call(env = REQUEST.read(client))
+      client = SockWrapper.new(client)
+      begin
+        response = app.call(env = REQUEST.read(client))
+        client.dbg "headers read"
 
-      if 100 == response[0].to_i
-        client.write(Const::EXPECT_100_RESPONSE)
-        env.delete(Const::HTTP_EXPECT)
-        response = app.call(env)
-      end
-      HttpResponse.write(client, response, HttpRequest::PARSER.headers?)
+        if 100 == response[0].to_i
+          client.write(Const::EXPECT_100_RESPONSE)
+          env.delete(Const::HTTP_EXPECT)
+          response = app.call(env)
+        end
+        client.dbg "writing response"
+        HttpResponse.write(client, response, HttpRequest::PARSER.headers?)
+        client.dbg "response written"
+      end while HttpRequest::PARSER.keepalive?
+      client.close
     rescue => e
+      client.dbg "E #{e.inspect}"
       handle_error(client, e)
     end
 

@@ -58,12 +58,11 @@ module Unicorn::HttpResponse
       socket.write("HTTP/1.1 #{status}\r\n" \
                    "Date: #{Time.now.httpdate}\r\n" \
                    "Status: #{status}\r\n" \
-                   "Connection: close\r\n" \
+                   "Connection: keep-alive\r\n" \
                    "#{out.join('')}\r\n")
     end
 
     body.each { |chunk| socket.write(chunk) }
-    socket.close # flushes and uncorks the socket immediately
     ensure
       body.respond_to?(:close) and body.close
   end
